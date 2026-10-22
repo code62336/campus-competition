@@ -1,5 +1,6 @@
 node_modules/
 uploads/*
 !uploads/.gitkeep
+src/uploads/
 .env
 *.log

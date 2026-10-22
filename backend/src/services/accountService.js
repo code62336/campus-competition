@@ -6,6 +6,7 @@ const { signAccess, genRefreshToken, genFamilyId, sha256 } = require('../utils/j
 const { toDateTime, nowStr, fromJson } = require('../utils/helpers');
 const { ROLE_PERMISSIONS } = require('../config');
 const audit = require('./auditService');
+const { clearStatusCache } = require('../middleware/auth');
 
 const LOCK_THRESHOLD = 5;
 const LOCK_MINUTES = 15;
@@ -87,6 +88,7 @@ async function login({ username, password, ip }) {
     await pool.query("UPDATE account SET status='ACTIVE', failed_count=0, locked_until=NULL WHERE id=?", [acc.id]);
     acc.status = 'ACTIVE';
     acc.failed_count = 0;
+    clearStatusCache(acc.id);
   }
   if (acc.status === 'LOCKED' || stillLocked) {
     throw new AppError(423, 'ACCOUNT_LOCKED', `账号已锁定，请 ${LOCK_MINUTES} 分钟后再试`);

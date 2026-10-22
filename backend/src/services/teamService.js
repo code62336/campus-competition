@@ -31,6 +31,15 @@ function assertTrack(comp, trackId) {
   return trackId;
 }
 
+// 校验院赛的学院限制与"是否允许跨学院"（建队与入队共用）
+function assertCollegeRule(comp, memberCollegeCode) {
+  if (!comp || comp.level !== 'COLLEGE' || !comp.college_code || comp.allow_cross_college) return;
+  if (!memberCollegeCode) throw new AppError(400, 'VALIDATION', '请先完善个人档案中的学院信息');
+  if (memberCollegeCode !== comp.college_code) {
+    throw new AppError(403, 'COLLEGE_RESTRICTED', '该院赛仅限本学院学生参加');
+  }
+}
+
 // ---------- 学生加入（事务内，已对 team 加锁） ----------
 async function joinStudent(teamId, accountId, source, invitedBy) {
   return withTransaction(async (conn) => {
@@ -49,7 +58,8 @@ async function joinStudent(teamId, accountId, source, invitedBy) {
       throw new AppError(409, 'ALREADY_IN_TEAM', '该学生已在此赛事加入其他队伍');
     }
 
-    const [prows] = await conn.query('SELECT real_name FROM user_profile WHERE account_id=?', [accountId]);
+    const [prows] = await conn.query('SELECT real_name, college_code FROM user_profile WHERE account_id=?', [accountId]);
+    if (comp) assertCollegeRule(comp, prows[0] ? prows[0].college_code : null);
     const snapshot = prows[0] ? prows[0].real_name : null;
     await conn.query(
       `INSERT INTO team_member (team_id, account_id, role, status, source, invited_by, real_name_snapshot, joined_at, created_at)
@@ -126,10 +136,9 @@ async function create(user, data) {
   const [leader] = await pool.query("SELECT id, user_type, display_name FROM account WHERE id=? AND user_type='STUDENT'", [leaderId]);
   if (!leader[0]) throw new AppError(400, 'VALIDATION', '队长必须是学生账号');
 
-  if (source === 'SELF' && !competitionService.windowOpen(comp)) {
+  if (!competitionService.windowOpen(comp)) {
     throw new AppError(409, 'REGISTER_CLOSED', '组队时间已截止');
   }
-
   let trackId = assertTrack(comp, data.trackId || null);
 
   const [dup] = await pool.query('SELECT id FROM team WHERE competition_id=? AND name=?', [competitionId, name]);
@@ -137,6 +146,7 @@ async function create(user, data) {
 
   const [prows] = await pool.query('SELECT college_code, real_name FROM user_profile WHERE account_id=?', [leaderId]);
   const collegeCode = prows[0] ? prows[0].college_code : null;
+  assertCollegeRule(comp, collegeCode);
 
   const id = await withTransaction(async (conn) => {
     if (await hasActiveTeam(conn, leaderId, competitionId)) {

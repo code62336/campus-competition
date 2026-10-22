@@ -146,7 +146,13 @@ function addTrack() { form.value.tracks.push({ id: Date.now(), name: '', quota: 
 function openCreate() { editing.value = null; form.value = emptyForm(); dialogVisible.value = true; }
 function openEdit(row) {
   editing.value = row;
-  form.value = { ...emptyForm(), ...row, tracks: (row.tracks || []).map((t) => ({ ...t })) };
+  form.value = {
+    ...emptyForm(),
+    ...row,
+    teacher_required: !!row.teacher_required,
+    allow_cross_college: !!row.allow_cross_college,
+    tracks: (row.tracks || []).map((t) => ({ ...t, enabled: !!t.enabled })),
+  };
   dialogVisible.value = true;
 }
 

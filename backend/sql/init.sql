@@ -2,10 +2,10 @@
 --  高校赛事管理系统 · 数据库初始化脚本
 --  数据库: MySQL 8.0 / InnoDB / utf8mb4
 --  说明: 将设计文档中的多 schema(6~7) 合理合并为单库 `tzb`，保留核心字段与状态机。
+--  用法: 先建库，再指定库执行本脚本（不硬编码 USE，避免误写其它库）：
+--    mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS tzb DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+--    mysql -uroot -p tzb < sql/init.sql
 -- =====================================================================
-
-CREATE DATABASE IF NOT EXISTS `tzb` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-USE `tzb`;
 
 SET NAMES utf8mb4;
 

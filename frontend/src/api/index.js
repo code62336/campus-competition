@@ -4,7 +4,6 @@ export default {
   // 认证
   register: (data) => request.post('/auth/register', data),
   login: (data) => request.post('/auth/login', data),
-  refresh: (refreshToken) => request.post('/auth/refresh', { refreshToken }),
   logout: (refreshToken) => request.post('/auth/logout', { refreshToken }),
   getMe: () => request.get('/auth/me'),
   changePassword: (data) => request.patch('/auth/password', data),
@@ -19,16 +18,13 @@ export default {
 
   // 教师/学生/字典
   listTeachers: (params) => request.get('/teachers', { params }),
-  getTeacher: (id) => request.get(`/teachers/${id}`),
   searchStudents: (params) => request.get('/students/search', { params }),
-  getStudent: (id) => request.get(`/students/${id}`),
   getDict: (type) => request.get(`/dicts/${type}`),
 
   // 赛事
   listCompetitions: (params) => request.get('/competitions', { params }),
   getCompetition: (id) => request.get(`/competitions/${id}`),
   getCompetitionStat: (id) => request.get(`/competitions/${id}/stat`),
-  myCompetitions: () => request.get('/competitions/mine'),
   createCompetition: (data) => request.post('/competitions', data),
   updateCompetition: (id, data) => request.patch(`/competitions/${id}`, data),
   deleteCompetition: (id) => request.delete(`/competitions/${id}`),

@@ -133,18 +133,6 @@ async function searchStudents({ keyword, collegeCode, degreeLevel, skill, page, 
   return { items: rows.map(normalizeProfile), total };
 }
 
-async function getStudentDetail(accountId) {
-  const [rows] = await pool.query(
-    `SELECT p.account_id, p.user_type, p.real_name, p.student_no, p.college_code, d.label AS college_name,
-            p.major_code, m.label AS major_name, p.class_name, p.degree_level, p.enrollment_year,
-            p.graduation_year, p.skills, p.looking_for_team, p.allow_teacher_invite, p.avatar_url, p.bio
-     FROM user_profile p ${COLLEGE_JOIN} ${MAJOR_JOIN} WHERE p.account_id=? AND p.user_type='STUDENT'`,
-    [accountId]
-  );
-  if (!rows[0]) throw new AppError(404, 'NOT_FOUND', '学生不存在');
-  return normalizeProfile(rows[0]);
-}
-
 // 学生公开主页（未登录可访问，仅白名单字段）
 async function getStudentPublic(accountId) {
   const [rows] = await pool.query(
@@ -159,5 +147,5 @@ async function getStudentPublic(accountId) {
 
 module.exports = {
   getMyProfile, updateMyProfile, submitVerification, getMyVerification,
-  listTeachers, getTeacherPublic, searchStudents, getStudentDetail, getStudentPublic,
+  listTeachers, getTeacherPublic, searchStudents, getStudentPublic,
 };

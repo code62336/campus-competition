@@ -37,9 +37,14 @@ campus-competition/
 ### 1. 初始化数据库（需本机 MySQL 8）
 
 ```bash
+```bash
 cd backend
-mysql -uroot -p < sql/init.sql     # 输入你的 MySQL 密码
+# 先建库（init.sql 不硬编码 USE，需由调用方指定库）
+mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS tzb DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+mysql -uroot -p tzb < sql/init.sql
 ```
+
+> 旧库升级：若此前用早期版本 `init.sql` 建过库（缺少 `verification_code.attempts` 列），执行 `mysql -uroot -p tzb < sql/upgrade-2026-10-22.sql` 即可（幂等）。
 
 ### 2. 配置后端
 
@@ -91,11 +96,12 @@ npm run dev
 - **通知**：站内信（邀请/队伍/系统）、未读计数、已读
 - **管理**：用户管理、认证审核、字典管理、审计日志、运营统计
 
-## 冒烟测试
+## 测试
 
 ```bash
 cd backend
-node test/smoke.js   # 需后端已启动、数据库为初始种子状态
+npm test                 # 冒烟测试（自包含，可重复运行，需后端已启动）
+npm run verify           # 修复回归验证（自包含，需后端已启动）
 ```
 
 ## 安全与已知限制（如实说明）

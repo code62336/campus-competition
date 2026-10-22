@@ -20,7 +20,7 @@ module.exports = {
     refreshExpiresInDays: 7,
   },
   uploadDir: process.env.UPLOAD_DIR || 'uploads',
-  uploadRoot: path.resolve(__dirname, '..', process.env.UPLOAD_DIR || 'uploads'),
+  uploadRoot: path.resolve(__dirname, '..', '..', process.env.UPLOAD_DIR || 'uploads'),
 };
 
 // 角色常量与权限码（前端 UI 控制用）

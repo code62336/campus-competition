@@ -66,6 +66,12 @@ async function create(user, data) {
     if (user.userType !== 'TEACHER') throw new AppError(403, 'PERMISSION_DENIED', '仅教师可挑选学生');
     if (!competitionId) throw new AppError(400, 'VALIDATION', '需指定赛事');
     if (!team) throw new AppError(400, 'VALIDATION', '请先选择你指导的队伍，再邀请学生加入');
+    // 必须是该队的指导老师（否则任何教师都能把学生塞进别人队伍）
+    const [adv] = await pool.query(
+      "SELECT id FROM team_member WHERE team_id=? AND account_id=? AND role='ADVISOR' AND status='ACTIVE'",
+      [team.id, user.id]
+    );
+    if (!adv[0]) throw new AppError(403, 'PERMISSION_DENIED', '只能邀请学生加入你指导的队伍');
     if (invitee.user_type !== 'STUDENT') throw new AppError(400, 'VALIDATION', '只能邀请学生');
     const [p] = await pool.query('SELECT allow_teacher_invite FROM user_profile WHERE account_id=?', [inviteeId]);
     if (p[0] && !p[0].allow_teacher_invite) throw new AppError(409, 'STUDENT_NOT_ACCEPT', '该学生关闭了老师邀请');

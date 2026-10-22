@@ -1,6 +1,7 @@
 const { pool } = require('../config/db');
 const { verifyAccess } = require('../utils/jwt');
 const AppError = require('../utils/AppError');
+const asyncHandler = require('../utils/asyncHandler');
 const { ROLE } = require('../config');
 
 // 账号状态内存缓存（60s TTL），避免每请求查库；禁用/改状态时主动失效
@@ -24,23 +25,24 @@ function parseToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7) : null;
 }
 
-async function authRequired(req, res, next) {
+// 必须用 asyncHandler 包装：Express 4 不捕获 async 中间件的 reject，否则 DB 抖动会导致请求挂起/进程退出
+const authRequired = asyncHandler(async (req, res, next) => {
   const token = parseToken(req);
-  if (!token) return next(new AppError(401, 'UNAUTHENTICATED', '未登录或登录已过期'));
+  if (!token) throw new AppError(401, 'UNAUTHENTICATED', '未登录或登录已过期');
   let payload;
   try {
     payload = verifyAccess(token);
   } catch (e) {
-    return next(new AppError(401, 'TOKEN_EXPIRED', '登录已过期，请重新登录'));
+    throw new AppError(401, 'TOKEN_EXPIRED', '登录已过期，请重新登录');
   }
   const acc = await getAccountStatus(Number(payload.sub));
-  if (!acc || acc.status !== 'ACTIVE') return next(new AppError(401, 'ACCOUNT_INVALID', '账号不可用，请重新登录'));
+  if (!acc || acc.status !== 'ACTIVE') throw new AppError(401, 'ACCOUNT_INVALID', '账号不可用，请重新登录');
   // 以数据库为准的 user_type/status，禁用与改角色即时生效
   req.user = { id: Number(payload.sub), userType: acc.userType, displayName: acc.displayName };
   next();
-}
+});
 
-// 可选鉴权：带了合法 token 就注入 user，否则放行（公开接口使用）
+// 可选鉴权：带了合法 token 就注入 user，否则放行（公开接口使用）；内部已 try/catch 兜底
 async function optionalAuth(req, res, next) {
   const token = parseToken(req);
   if (!token) return next();

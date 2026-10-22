@@ -7,7 +7,9 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/seed.js",
-    "init-db": "mysql -uroot -p < sql/init.sql"
+    "smoke": "node test/smoke.js",
+    "verify": "python test/verify.py",
+    "test": "npm run smoke"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

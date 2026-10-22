@@ -25,8 +25,6 @@ exports.toDateTime = (s) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
 
-exports.today = () => new Date().getFullYear();
-
 // 当前时间（'YYYY-MM-DD HH:mm:ss' 字符串，可直接与 dateStrings 结果比较）
 exports.nowStr = () => exports.toDateTime(new Date());
 

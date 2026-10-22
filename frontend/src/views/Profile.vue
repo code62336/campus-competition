@@ -8,7 +8,7 @@
         <div class="card profile-card">
           <div class="avatar-wrap">
             <el-avatar :size="88" :src="profile?.avatar_url || undefined">{{ (auth.displayName || '?').slice(0, 1) }}</el-avatar>
-            <el-upload :show-file-list="false" :http-request="uploadAvatar" accept="image/*">
+            <el-upload :show-file-list="false" :http-request="uploadAvatar" accept="image/png,image/jpeg,image/gif,image/webp">
               <el-button size="small" circle class="avatar-edit"><el-icon><Camera /></el-icon></el-button>
             </el-upload>
           </div>
@@ -153,7 +153,7 @@ const allMajors = ref([]);
 async function saveProfile() {
   saving.value = true;
   try {
-    await api.updateMyProfile(form.value);
+    profile.value = await api.updateMyProfile(form.value);
     ElMessage.success('资料已保存');
     await auth.fetchMe();
   } finally { saving.value = false; }
@@ -191,7 +191,13 @@ onMounted(async () => {
 
   profile.value = await api.getMyProfile();
   if (profile.value) {
-    form.value = { ...profile.value, skills: profile.value.skills || [] };
+    form.value = {
+      ...profile.value,
+      skills: profile.value.skills || [],
+      looking_for_team: !!profile.value.looking_for_team,
+      allow_teacher_invite: !!profile.value.allow_teacher_invite,
+      accept_students: !!profile.value.accept_students,
+    };
     onCollegeChange();
   }
   if (auth.role === 'STUDENT' || auth.role === 'TEACHER') {

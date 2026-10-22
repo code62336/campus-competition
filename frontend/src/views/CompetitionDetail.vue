@@ -15,6 +15,7 @@
         </div>
         <div class="hero-actions">
           <el-button v-if="canCreateTeam" type="warning" size="large" round @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;创建队伍</el-button>
+          <el-button v-if="['MANAGER','ADMIN'].includes(auth.role)" size="large" round @click="openBehalf"><el-icon><Plus /></el-icon>&nbsp;代建队伍</el-button>
           <el-button v-if="['MANAGER','ADMIN'].includes(auth.role)" size="large" round @click="loadStat"><el-icon><DataAnalysis /></el-icon>&nbsp;查看统计</el-button>
         </div>
       </div>
@@ -84,6 +85,32 @@
         <el-button type="primary" :loading="creating" @click="doCreate">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 代建弹窗（负责人/管理员） -->
+    <el-dialog v-model="behalfVisible" title="代学生创建队伍" width="520px">
+      <el-form :model="behalfForm" label-position="top">
+        <el-form-item label="队长（学生）" required>
+          <el-select v-model="behalfForm.leaderId" filterable remote :remote-method="searchLeader" :loading="leaderSearching" placeholder="输入姓名/学号搜索" style="width:100%">
+            <el-option v-for="s in leaderResults" :key="s.account_id" :label="`${s.real_name}（${s.college_name || '—'}）`" :value="s.account_id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="队伍名称" required>
+          <el-input v-model="behalfForm.name" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="队伍口号 / 简介">
+          <el-input v-model="behalfForm.slogan" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="赛道">
+          <el-select v-model="behalfForm.trackId" placeholder="请选择" style="width:100%">
+            <el-option v-for="t in comp.tracks" :key="t.id" :label="t.name" :value="t.id" :disabled="!t.enabled" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="behalfVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="doBehalf">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -122,6 +149,28 @@ function renderMd(md) {
 }
 
 function openCreate() { createForm.value = { name: '', slogan: '', trackId: null }; createVisible.value = true; }
+
+const behalfVisible = ref(false);
+const behalfForm = ref({ leaderId: null, name: '', slogan: '', trackId: null });
+const leaderResults = ref([]);
+const leaderSearching = ref(false);
+
+function openBehalf() { behalfForm.value = { leaderId: null, name: '', slogan: '', trackId: null }; leaderResults.value = []; behalfVisible.value = true; searchLeader(''); }
+async function searchLeader(kw) {
+  leaderSearching.value = true;
+  try { leaderResults.value = (await api.searchStudents({ keyword: kw || '', size: 20 })).items; } finally { leaderSearching.value = false; }
+}
+async function doBehalf() {
+  if (!behalfForm.value.leaderId) return ElMessage.warning('请选择队长');
+  if (!behalfForm.value.name) return ElMessage.warning('请填写队伍名称');
+  creating.value = true;
+  try {
+    const team = await api.createTeam({ competitionId: comp.value.id, leaderId: behalfForm.value.leaderId, name: behalfForm.value.name, slogan: behalfForm.value.slogan, trackId: behalfForm.value.trackId });
+    ElMessage.success('代建队伍成功');
+    behalfVisible.value = false;
+    router.push(`/teams/${team.id}`);
+  } catch (e) { /* ignore */ } finally { creating.value = false; }
+}
 
 async function doCreate() {
   if (!createForm.value.name) return ElMessage.warning('请填写队伍名称');
