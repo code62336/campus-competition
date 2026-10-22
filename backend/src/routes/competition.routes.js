@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const competitionService = require('../services/competitionService');
-const { authRequired, requireManager } = require('../middleware/auth');
+const { authRequired, optionalAuth, requireManager } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 const { ok, paged, parsePager } = require('../utils/response');
 
@@ -14,8 +14,8 @@ router.get('/', asyncHandler(async (req, res) => {
 // 我组织的赛事（负责人/管理员）
 router.get('/mine', authRequired, requireManager, asyncHandler(async (req, res) => ok(res, await competitionService.mine(req.user))));
 
-// 详情
-router.get('/:id', asyncHandler(async (req, res) => ok(res, await competitionService.detail(req.params.id))));
+// 详情（草稿仅创建者可预览）
+router.get('/:id', optionalAuth, asyncHandler(async (req, res) => ok(res, await competitionService.detail(req.params.id, req.user))));
 
 // 统计
 router.get('/:id/stat', authRequired, asyncHandler(async (req, res) => ok(res, await competitionService.stat(req.user, req.params.id))));

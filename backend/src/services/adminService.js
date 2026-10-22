@@ -5,6 +5,7 @@ const { fromJson, toJson } = require('../utils/helpers');
 const accountService = require('./accountService');
 const audit = require('./auditService');
 const notify = require('./notificationService');
+const { clearStatusCache } = require('../middleware/auth');
 
 // ---------- 用户管理 ----------
 async function listUsers({ keyword, userType, status, page, size, offset }) {
@@ -36,6 +37,7 @@ async function setUserStatus(operator, id, status) {
   if (!acc) throw new AppError(404, 'NOT_FOUND', '用户不存在');
   if (acc.user_type === 'ADMIN' && status !== 'ACTIVE') throw new AppError(400, 'VALIDATION', '不能禁用超级管理员');
   await pool.query('UPDATE account SET status=?, locked_until=IF(?=\'LOCKED\', NOW(3) + INTERVAL 15 MINUTE, NULL), failed_count=0 WHERE id=?', [status, status, id]);
+  clearStatusCache(id);
   if (status === 'DISABLED' || status === 'LOCKED') await accountService.revokeAllTokens(id);
   await audit.log({ operator_id: operator.id, operator_name: operator.displayName, action: 'ACCOUNT_STATUS', module: 'admin', resource_type: 'ACCOUNT', resource_id: id, detail: { status } });
   return true;
@@ -65,13 +67,12 @@ async function createUser(operator, data) {
       [username, h, userType, realName, data.email || null, data.phone || null]
     );
     const aid = res.insertId;
-    if (['STUDENT', 'TEACHER'].includes(userType)) {
-      await conn.query(
-        `INSERT INTO user_profile (account_id, user_type, real_name, student_no, teacher_no, gender, college_code, major_code, class_name, enrollment_year, graduation_year, degree_level, title, research_fields, bio, profile_completed, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(3))`,
-        [aid, userType, realName, data.studentNo || null, data.teacherNo || null, data.gender || null, data.collegeCode || null, data.majorCode || null, data.className || null, data.enrollmentYear || null, data.graduationYear || null, data.degreeLevel || null, data.title || null, data.researchFields || null, data.bio || null]
-      );
-    }
+    // 所有类型都建档案（负责人/管理员也需在个人中心展示与维护基础信息）
+    await conn.query(
+      `INSERT INTO user_profile (account_id, user_type, real_name, student_no, teacher_no, gender, college_code, major_code, class_name, enrollment_year, graduation_year, degree_level, title, research_fields, bio, profile_completed, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,NOW(3))`,
+      [aid, userType, realName, data.studentNo || null, data.teacherNo || null, data.gender || null, data.collegeCode || null, data.majorCode || null, data.className || null, data.enrollmentYear || null, data.graduationYear || null, data.degreeLevel || null, data.title || null, data.researchFields || null, data.bio || null]
+    );
     return aid;
   });
   await audit.log({ operator_id: operator.id, operator_name: operator.displayName, action: 'ACCOUNT_CREATE', module: 'admin', resource_type: 'ACCOUNT', resource_id: id, detail: { userType, username } });
@@ -124,6 +125,8 @@ async function listDicts(type) {
 async function saveDict(operator, { id, type, code, label, sort, parentCode, enabled }) {
   if (!type || !code || !label) throw new AppError(400, 'VALIDATION', '类型、编码、名称必填');
   if (id) {
+    const [dup] = await pool.query('SELECT id FROM dict_item WHERE type=? AND code=? AND id<>?', [type, code, id]);
+    if (dup[0]) throw new AppError(409, 'DICT_EXISTS', '该类型下编码已存在');
     await pool.query('UPDATE dict_item SET type=?, code=?, label=?, sort=?, parent_code=?, enabled=? WHERE id=?', [type, code, label, sort || 0, parentCode || null, enabled === undefined ? 1 : (enabled ? 1 : 0), id]);
   } else {
     const [dup] = await pool.query('SELECT id FROM dict_item WHERE type=? AND code=?', [type, code]);
@@ -156,18 +159,22 @@ async function listAuditLogs({ action, operatorId, page, size, offset }) {
 }
 
 // ---------- 仪表盘统计 ----------
-async function stats() {
+async function stats(user) {
   const [byType] = await pool.query('SELECT user_type, COUNT(*) c FROM account GROUP BY user_type');
   const [comp] = await pool.query('SELECT status, COUNT(*) c FROM competition GROUP BY status');
   const [teams] = await pool.query("SELECT COUNT(*) c FROM team WHERE status<>'DISBANDED'");
   const [pending] = await pool.query("SELECT COUNT(*) c FROM user_verification WHERE status='PENDING_REVIEW'");
-  const [recent] = await pool.query('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 8');
+  let recentAudits = [];
+  if (user && user.userType === 'ADMIN') {
+    const [recent] = await pool.query('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 8');
+    recentAudits = recent.map((r) => { r.detail_json = fromJson(r.detail_json); return r; });
+  }
   return {
     userByType: byType,
     competitionByStatus: comp,
     teamCount: teams[0].c,
     pendingVerification: pending[0].c,
-    recentAudits: recent.map((r) => { r.detail_json = fromJson(r.detail_json); return r; }),
+    recentAudits,
   };
 }
 

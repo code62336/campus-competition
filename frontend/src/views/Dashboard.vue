@@ -6,7 +6,7 @@
         <h2 class="hero-title">{{ greeting }}，{{ auth.displayName }} 👋</h2>
         <p class="hero-sub">
           当前身份：<b>{{ auth.roleLabel }}</b>
-          <template v-if="auth.profile?.verify_status === 'VERIFIED'"> · 已认证 ✓</template>
+          <template v-if="auth.user?.verifyStatus === 'VERIFIED'"> · 已认证 ✓</template>
           <template v-else> · <el-link type="warning" @click="$router.push('/profile')">未认证，去完善</el-link></template>
         </p>
       </div>

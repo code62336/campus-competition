@@ -18,11 +18,25 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage, limits: { fileSize: 32 * 1024 * 1024 } });
+// 仅允许图片，避免上传 HTML/SVG 造成存储型 XSS
+const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_EXT.has(ext)) return cb(new AppError(400, 'BAD_FILE_TYPE', '仅支持上传图片（png/jpg/jpeg/gif/webp）'));
+    cb(null, true);
+  },
+});
 
 router.post('/', authRequired, (req, res, next) => {
   upload.single('file')(req, res, (err) => {
-    if (err) return next(new AppError(400, 'UPLOAD_ERROR', err.message));
+    if (err) {
+      if (err instanceof AppError) return next(err);
+      return next(new AppError(400, 'UPLOAD_ERROR', err.message));
+    }
     if (!req.file) return next(new AppError(400, 'NO_FILE', '未收到文件'));
     return ok(res, { url: `/uploads/${req.file.filename}`, name: req.file.originalname, size: req.file.size }, 201);
   });

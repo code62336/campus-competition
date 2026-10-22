@@ -5,12 +5,16 @@ const errorHandler = require('./middleware/error');
 
 const app = express();
 
-app.use(cors());
+// 仅允许本地来源，避免跨域被滥用（前端经 vite 代理同源访问，正常无需 CORS）
+app.use(cors({ origin: [/^https?:\/\/localhost(:\d+)?$/, /^https?:\/\/127\.0\.0\.1(:\d+)?$/] }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// 上传文件静态访问
-app.use('/uploads', express.static(config.uploadRoot));
+// 上传文件静态访问：禁止按脚本执行
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+}, express.static(config.uploadRoot));
 
 // 健康检查
 app.get('/api/v1/health', (req, res) => res.json({ code: 0, message: 'ok', data: { status: 'up', time: new Date().toISOString() } }));

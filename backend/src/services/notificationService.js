@@ -41,8 +41,9 @@ exports.unreadCount = async (accountId) => {
 exports.markRead = async (accountId, id) => {
   const [res] = await pool.query('UPDATE notification SET read_at=IFNULL(read_at, NOW(3)) WHERE id=? AND recipient_id=?', [id, accountId]);
   if (res.affectedRows === 0) {
-    const [chk] = await pool.query('SELECT id FROM notification WHERE id=?', [id]);
+    const [chk] = await pool.query('SELECT recipient_id FROM notification WHERE id=?', [id]);
     if (!chk[0]) throw new AppError(404, 'NOT_FOUND', '通知不存在');
+    throw new AppError(403, 'PERMISSION_DENIED', '无权限操作该通知');
   }
   return true;
 };

@@ -1,7 +1,8 @@
-const { pool, withTransaction } = require('../config/db');
+const { pool } = require('../config/db');
 const AppError = require('../utils/AppError');
 const { addDays, nowStr } = require('../utils/helpers');
 const teamService = require('./teamService');
+const competitionService = require('./competitionService');
 const audit = require('./auditService');
 const notify = require('./notificationService');
 
@@ -64,6 +65,7 @@ async function create(user, data) {
   } else if (type === 'TEACHER_INVITE_STUDENT') {
     if (user.userType !== 'TEACHER') throw new AppError(403, 'PERMISSION_DENIED', '仅教师可挑选学生');
     if (!competitionId) throw new AppError(400, 'VALIDATION', '需指定赛事');
+    if (!team) throw new AppError(400, 'VALIDATION', '请先选择你指导的队伍，再邀请学生加入');
     if (invitee.user_type !== 'STUDENT') throw new AppError(400, 'VALIDATION', '只能邀请学生');
     const [p] = await pool.query('SELECT allow_teacher_invite FROM user_profile WHERE account_id=?', [inviteeId]);
     if (p[0] && !p[0].allow_teacher_invite) throw new AppError(409, 'STUDENT_NOT_ACCEPT', '该学生关闭了老师邀请');
@@ -72,7 +74,7 @@ async function create(user, data) {
       [inviteeId, competitionId]
     );
     if (exist[0]) throw new AppError(409, 'ALREADY_IN_TEAM', '该学生已在此赛事加入队伍');
-    await checkPending(type, teamId || null, user.id, inviteeId);
+    await checkPending(type, team.id, user.id, inviteeId);
   }
 
   const [res] = await pool.query(
@@ -84,7 +86,7 @@ async function create(user, data) {
   const inviterName = user.displayName || '同学/老师';
   await notify.notify(inviteeId, 'INVITATION', TYPE_NAMES[type], `${inviterName}${type === 'TEACHER_INVITE_STUDENT' ? '邀请你加入队伍' : '向你发起了' + TYPE_NAMES[type]}${team ? `：「${team.name}」` : ''}${message ? '，留言：' + message : ''}`, team ? `/teams/${team.id}` : null);
 
-  return { id: res[0].insertId };
+  return { id: res.insertId };
 }
 
 // ---------- 学生申请入队 ----------
@@ -95,6 +97,10 @@ async function createJoinRequest(user, data) {
   const team = await teamService.getTeam(teamId);
   if (!team) throw new AppError(404, 'NOT_FOUND', '队伍不存在');
   if (team.status !== 'RECRUITING') throw new AppError(409, 'TEAM_LOCKED', '该队伍未在招募');
+
+  const comp = await competitionService.findById(team.competition_id);
+  if (comp && !competitionService.windowOpen(comp)) throw new AppError(409, 'REGISTER_CLOSED', '组队时间已截止');
+
   const [ex] = await pool.query('SELECT id FROM team_member WHERE team_id=? AND account_id=?', [teamId, user.id]);
   if (ex[0]) throw new AppError(409, 'ALREADY_MEMBER', '你已在该队伍中');
   await checkPending('STUDENT_APPLY_JOIN', teamId, user.id, team.leader_id);
@@ -105,7 +111,7 @@ async function createJoinRequest(user, data) {
     ['STUDENT_APPLY_JOIN', team.competition_id, teamId, user.id, team.leader_id, message || null, 'PENDING', addDays(7)]
   );
   await notify.notify(team.leader_id, 'INVITATION', '收到入队申请', `${user.displayName} 申请加入「${team.name}」${message ? '：' + message : ''}`, `/teams/${teamId}`);
-  return { id: res[0].insertId };
+  return { id: res.insertId };
 }
 
 // ---------- 邀请列表 ----------
@@ -168,8 +174,7 @@ async function reject(id, user, reason) {
   if (!inv) throw new AppError(404, 'NOT_FOUND', '邀请不存在');
   if (inv.status !== 'PENDING') throw new AppError(409, 'STATE_CONFLICT', '该邀请已处理');
   const isManager = ['MANAGER', 'ADMIN'].includes(user.userType);
-  const responder = inv.type === 'STUDENT_APPLY_JOIN' ? inv.invitee_id : inv.invitee_id;
-  if (responder !== user.id && !isManager) throw new AppError(403, 'PERMISSION_DENIED', '无权限处理该邀请');
+  if (inv.invitee_id !== user.id && !isManager) throw new AppError(403, 'PERMISSION_DENIED', '无权限处理该邀请');
   await pool.query("UPDATE invitation SET status='REJECTED', responded_at=NOW(3), reject_reason=? WHERE id=?", [reason || null, id]);
   return true;
 }

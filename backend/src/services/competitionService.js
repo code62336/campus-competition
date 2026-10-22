@@ -14,6 +14,13 @@ function isOwner(c, user) {
   return user && (user.userType === 'ADMIN' || c.created_by === user.id);
 }
 
+// 赛事状态机：合法流转
+const TRANSITIONS = {
+  PUBLISHED: ['DRAFT', 'OFFLINE'],
+  OFFLINE: ['PUBLISHED'],
+  ARCHIVED: ['PUBLISHED', 'OFFLINE'],
+};
+
 async function findById(id) {
   const [rows] = await pool.query('SELECT * FROM competition WHERE id=?', [id]);
   return rows[0] || null;
@@ -51,10 +58,10 @@ async function list({ keyword, level, year, category, collegeCode, page, size, o
   return { items: rows, total };
 }
 
-async function detail(id) {
+async function detail(id, user) {
   const c = await findById(id);
   if (!c) throw new AppError(404, 'NOT_FOUND', '赛事不存在');
-  if (c.status === 'DRAFT') throw new AppError(404, 'NOT_FOUND', '赛事尚未发布');
+  if (c.status === 'DRAFT' && !isOwner(c, user)) throw new AppError(404, 'NOT_FOUND', '赛事尚未发布');
   const stat = await attachStat(id);
   return { ...normalize(c), register_open: windowOpen(c), ...stat };
 }
@@ -122,7 +129,6 @@ async function update(user, id, data) {
   if (!isOwner(c, user)) throw new AppError(403, 'PERMISSION_DENIED', '无权限编辑该赛事');
   if (c.status === 'ARCHIVED') throw new AppError(409, 'COMPETITION_ARCHIVED', '赛事已归档，不可编辑');
 
-  const fields = ['title', 'subtitle', 'level', 'college_code', 'year', 'category', 'organizer', 'official_url', 'description_md', 'cover_url'];
   const sets = [];
   const values = [];
   const map = { title: 'title', subtitle: 'subtitle', level: 'level', collegeCode: 'college_code', year: 'year', category: 'category', organizer: 'organizer', officialUrl: 'official_url', descriptionMd: 'description_md', coverUrl: 'cover_url' };
@@ -156,6 +162,7 @@ async function publish(user, id) {
   const c = await findById(id);
   if (!c) throw new AppError(404, 'NOT_FOUND', '赛事不存在');
   if (!isOwner(c, user)) throw new AppError(403, 'PERMISSION_DENIED', '无权限发布');
+  if (!TRANSITIONS.PUBLISHED.includes(c.status)) throw new AppError(409, 'STATE_CONFLICT', '当前状态不可发布');
   const tracks = fromJson(c.tracks_json) || [];
   if (!tracks.length) throw new AppError(400, 'NO_TRACK', '请至少配置一个赛道');
   if (!c.register_start_at || !c.register_end_at) throw new AppError(400, 'NO_WINDOW', '请配置组队时间窗口');
@@ -169,7 +176,8 @@ async function setStatus(user, id, status, action) {
   const c = await findById(id);
   if (!c) throw new AppError(404, 'NOT_FOUND', '赛事不存在');
   if (!isOwner(c, user)) throw new AppError(403, 'PERMISSION_DENIED', '无权限操作');
-  if (status === 'OFFLINE' && c.status !== 'PUBLISHED') throw new AppError(409, 'STATE_CONFLICT', '仅已发布赛事可下架');
+  const froms = TRANSITIONS[status] || [];
+  if (!froms.includes(c.status)) throw new AppError(409, 'STATE_CONFLICT', `当前状态「${c.status}」不能流转到「${status}」`);
   await pool.query(`UPDATE competition SET status=?${status === 'ARCHIVED' ? ', archived_at=NOW(3)' : ''} WHERE id=?`, [status, id]);
   await audit.log({ operator_id: user.id, operator_name: user.displayName, action, module: 'comp', resource_type: 'COMPETITION', resource_id: id });
   return normalize(await findById(id));

@@ -54,15 +54,15 @@
     </div>
 
     <!-- 邀请弹窗 -->
-    <el-dialog v-model="inviteVisible" title="邀请学生" width="440px">
-      <p class="text-muted text-sm" style="margin-top:0">邀请 <b>{{ inviteTarget?.real_name }}</b> 参加赛事：</p>
-      <el-select v-model="selectedCompId" placeholder="选择赛事" style="width:100%">
-        <el-option v-for="c in competitions" :key="c.id" :label="c.title" :value="c.id" />
+    <el-dialog v-model="inviteVisible" title="邀请学生入队" width="440px">
+      <p class="text-muted text-sm" style="margin-top:0">邀请 <b>{{ inviteTarget?.real_name }}</b> 加入你指导的队伍：</p>
+      <el-select v-model="selectedTeamId" placeholder="选择你指导的队伍" style="width:100%">
+        <el-option v-for="t in myTeams" :key="t.id" :label="`${t.name}（${t.competition_title}）`" :value="t.id" />
       </el-select>
       <el-input v-model="inviteMessage" type="textarea" placeholder="留言（可选）" maxlength="500" style="margin-top:12px" />
       <template #footer>
         <el-button @click="inviteVisible=false">取消</el-button>
-        <el-button type="primary" :disabled="!selectedCompId" @click="doInvite">发送邀请</el-button>
+        <el-button type="primary" :disabled="!selectedTeamId" @click="doInvite">发送邀请</el-button>
       </template>
     </el-dialog>
   </div>
@@ -79,12 +79,12 @@ const list = ref([]);
 const total = ref(0);
 const colleges = ref([]);
 const skillTags = ref([]);
-const competitions = ref([]);
+const myTeams = ref([]);
 const query = ref({ keyword: '', college_code: '', degree_level: '', skill: '', page: 1, size: 10 });
 
 const inviteVisible = ref(false);
 const inviteTarget = ref(null);
-const selectedCompId = ref(null);
+const selectedTeamId = ref(null);
 const inviteMessage = ref('');
 
 function degreeLabel(d) { return { BACHELOR: '本科', MASTER: '硕士', DOCTOR: '博士' }[d] || d || '—'; }
@@ -99,12 +99,14 @@ async function load(page) {
 
 function openInvite(row) {
   inviteTarget.value = row;
-  selectedCompId.value = competitions.value.length ? competitions.value[0].id : null;
   inviteMessage.value = '';
+  if (!myTeams.value.length) return ElMessage.warning('你还没有指导队伍，请先让队伍邀请你担任指导老师');
+  selectedTeamId.value = myTeams.value[0].id;
   inviteVisible.value = true;
 }
 async function doInvite() {
-  await api.createInvitation({ type: 'TEACHER_INVITE_STUDENT', competitionId: selectedCompId.value, inviteeId: inviteTarget.value.account_id, message: inviteMessage.value });
+  const team = myTeams.value.find((x) => x.id === selectedTeamId.value);
+  await api.createInvitation({ type: 'TEACHER_INVITE_STUDENT', competitionId: team.competition_id, teamId: team.id, inviteeId: inviteTarget.value.account_id, message: inviteMessage.value });
   ElMessage.success('邀请已发出'); inviteVisible.value = false;
 }
 
@@ -112,7 +114,7 @@ onMounted(async () => {
   colleges.value = await api.getDict('COLLEGE');
   skillTags.value = await api.getDict('SKILL_TAG');
   skillTags.value.forEach((s) => { skillNameMap[s.code] = s.label; });
-  try { competitions.value = (await api.listCompetitions({ size: 100 })).items; } catch (e) { /* ignore */ }
+  try { myTeams.value = await api.myTeams(); } catch (e) { /* ignore */ }
   load(1);
 });
 </script>

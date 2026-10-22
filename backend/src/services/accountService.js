@@ -1,4 +1,5 @@
 const { pool, withTransaction } = require('../config/db');
+const crypto = require('crypto');
 const AppError = require('../utils/AppError');
 const { hash, compare } = require('../utils/password');
 const { signAccess, genRefreshToken, genFamilyId, sha256 } = require('../utils/jwt');
@@ -40,6 +41,10 @@ async function register(input) {
 
   const exists = await findByUsername(username);
   if (exists) throw new AppError(409, 'USERNAME_EXISTS', '该用户名已被注册');
+  if (input.email) {
+    const [emailRows] = await pool.query('SELECT id FROM account WHERE email=?', [input.email]);
+    if (emailRows[0]) throw new AppError(409, 'EMAIL_EXISTS', '该邮箱已被注册');
+  }
 
   const passwordHash = await hash(password);
   const accountId = await withTransaction(async (conn) => {
@@ -77,7 +82,13 @@ async function login({ username, password, ip }) {
     throw new AppError(401, 'BAD_CREDENTIALS', '用户名或密码错误');
   }
   if (acc.status === 'DISABLED' || acc.status === 'DELETED') throw new AppError(403, 'ACCOUNT_DISABLED', '账号已被禁用，请联系管理员');
-  if (acc.status === 'LOCKED' || (acc.locked_until && acc.locked_until > nowStr())) {
+  const stillLocked = !!(acc.locked_until && acc.locked_until > nowStr());
+  if (acc.status === 'LOCKED' && !stillLocked) {
+    await pool.query("UPDATE account SET status='ACTIVE', failed_count=0, locked_until=NULL WHERE id=?", [acc.id]);
+    acc.status = 'ACTIVE';
+    acc.failed_count = 0;
+  }
+  if (acc.status === 'LOCKED' || stillLocked) {
     throw new AppError(423, 'ACCOUNT_LOCKED', `账号已锁定，请 ${LOCK_MINUTES} 分钟后再试`);
   }
 
@@ -115,7 +126,13 @@ async function refresh(refreshToken) {
   const tokenHash = sha256(refreshToken);
   const [rows] = await pool.query('SELECT * FROM refresh_token WHERE token_hash = ?', [tokenHash]);
   const rt = rows[0];
-  if (!rt || rt.revoked_at) throw new AppError(401, 'REFRESH_REUSED', '登录状态异常，请重新登录');
+  if (!rt) throw new AppError(401, 'REFRESH_INVALID', '登录状态异常，请重新登录');
+  if (rt.revoked_at) {
+    // 检测到重放：吊销整族并审计，强制重新登录
+    await pool.query('UPDATE refresh_token SET revoked_at=NOW(3) WHERE family_id=? AND revoked_at IS NULL', [rt.family_id]);
+    await audit.log({ operator_id: rt.account_id, action: 'TOKEN_REUSE_DETECTED', module: 'auth', detail: { familyId: rt.family_id }, result: 'FAILED' });
+    throw new AppError(401, 'REFRESH_REUSED', '检测到令牌重放，请重新登录');
+  }
   if (rt.expires_at <= nowStr()) throw new AppError(401, 'REFRESH_EXPIRED', '登录已过期，请重新登录');
 
   const acc = await findById(rt.account_id);
@@ -179,25 +196,50 @@ async function sendCode({ email, purpose }) {
   if (!['RESET_PASSWORD', 'REGISTER', 'BIND_EMAIL'].includes(purpose)) throw new AppError(400, 'VALIDATION', '非法用途');
   const [accRows] = await pool.query('SELECT id FROM account WHERE email=?', [email]);
   if (purpose === 'RESET_PASSWORD' && !accRows[0]) throw new AppError(404, 'EMAIL_NOT_FOUND', '该邮箱未注册');
-  const code = String(Math.floor(100000 + Math.random() * 900000));
+
+  // 频率限制：同邮箱同用途 60 秒一次
+  const [recent] = await pool.query(
+    'SELECT id FROM verification_code WHERE contact=? AND purpose=? AND created_at > NOW(3) - INTERVAL 60 SECOND LIMIT 1',
+    [email, purpose]
+  );
+  if (recent[0]) throw new AppError(429, 'TOO_FREQUENT', '发送过于频繁，请 60 秒后再试');
+  // 每日上限 5 次
+  const [todayCount] = await pool.query(
+    'SELECT COUNT(*) c FROM verification_code WHERE contact=? AND purpose=? AND created_at >= CURDATE()',
+    [email, purpose]
+  );
+  if (todayCount[0].c >= 5) throw new AppError(429, 'DAILY_LIMIT', '今日发送次数已达上限');
+
+  // 密码学安全随机 6 位验证码
+  const code = String(crypto.randomInt(100000, 1000000));
   await pool.query('INSERT INTO verification_code (contact, purpose, code_hash, expires_at) VALUES (?,?,?,?)', [
     email, purpose, sha256(code), toDateTime(new Date(Date.now() + 10 * 60 * 1000)),
   ]);
-  // 演示环境：无 SMTP，验证码打印到日志并返回（生产环境应通过邮件发送，切勿返回）
-  console.log(`[验证码] ${email} (${purpose}): ${code}`);
-  return { sent: true, devCode: code };
+  console.log(`[验证码] ${email} (${purpose}): ${code}`); // 仅服务端日志，生产环境应接入邮件服务
+  // 默认不向调用方返回验证码；仅本地演示需自测时，显式设置 DEV_EXPOSE_CODE=1 才会回传
+  const devExpose = process.env.DEV_EXPOSE_CODE === '1';
+  return devExpose ? { sent: true, devCode: code } : { sent: true };
 }
 
 async function resetPassword({ email, code, newPassword }) {
   if (!email || !code || !newPassword) throw new AppError(400, 'VALIDATION', '请完整填写邮箱、验证码、新密码');
   if (String(newPassword).length < 6) throw new AppError(400, 'VALIDATION', '新密码长度至少 6 位');
   const [rows] = await pool.query(
-    'SELECT * FROM verification_code WHERE contact=? AND purpose=? AND code_hash=? AND used_at IS NULL ORDER BY id DESC LIMIT 1',
-    [email, 'RESET_PASSWORD', sha256(code)]
+    'SELECT * FROM verification_code WHERE contact=? AND purpose=? AND used_at IS NULL ORDER BY id DESC LIMIT 1',
+    [email, 'RESET_PASSWORD']
   );
   const vc = rows[0];
   if (!vc) throw new AppError(400, 'BAD_CODE', '验证码错误');
   if (vc.expires_at <= nowStr()) throw new AppError(400, 'CODE_EXPIRED', '验证码已过期');
+  if (vc.code_hash !== sha256(code)) {
+    const attempts = (vc.attempts || 0) + 1;
+    if (attempts >= 5) {
+      await pool.query("UPDATE verification_code SET used_at=NOW(3) WHERE contact=? AND purpose='RESET_PASSWORD' AND used_at IS NULL", [email]);
+      throw new AppError(400, 'CODE_INVALIDATED', '验证码错误次数过多，已失效，请重新获取');
+    }
+    await pool.query('UPDATE verification_code SET attempts=? WHERE id=?', [attempts, vc.id]);
+    throw new AppError(400, 'BAD_CODE', '验证码错误');
+  }
   const [accRows] = await pool.query('SELECT id FROM account WHERE email=?', [email]);
   if (!accRows[0]) throw new AppError(404, 'EMAIL_NOT_FOUND', '该邮箱未注册');
   const newHash = await hash(newPassword);

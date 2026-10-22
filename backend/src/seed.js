@@ -55,14 +55,20 @@ async function main() {
   const s2 = await createAccount('student2', h123, 'STUDENT', '赵六', 'zhaoliu@tzb.edu.cn');
   const s3 = await createAccount('student3', h123, 'STUDENT', '孙七', 'sunqi@tzb.edu.cn');
   const s4 = await createAccount('student4', h123, 'STUDENT', '周八', 'zhouba@tzb.edu.cn');
+  const s5 = await createAccount('student5', h123, 'STUDENT', '陈九', 'chenjiu@tzb.edu.cn');
+  const s6 = await createAccount('student6', h123, 'STUDENT', '吴十', 'wushi@tzb.edu.cn');
 
   // ---- 档案 ----
+  await createProfile(adminId, 'ADMIN', { real_name: '超级管理员' });
+  await createProfile(managerId, 'MANAGER', { real_name: '赛事负责人' });
   await createProfile(t1, 'TEACHER', { real_name: '张三', teacher_no: 'T1001', college_code: 'CS', title: 'PROF', research_fields: '人工智能、机器学习、计算机视觉', bio: '计算机学院教授，博士生导师，长期从事人工智能与机器学习研究，指导过多项国家级竞赛。', accept_students: 1, max_teams: 3 });
   await createProfile(t2, 'TEACHER', { real_name: '李四', teacher_no: 'T1002', college_code: 'SE', title: 'APROF', research_fields: '软件工程、后端架构、微服务', bio: '软件学院副教授，研究方向为软件工程与分布式系统。', accept_students: 1, max_teams: 2 });
   await createProfile(s1, 'STUDENT', { real_name: '王五', student_no: '2023001', college_code: 'CS', major_code: 'CS_CS', class_name: '计科2301', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['FE', 'ALGO'], looking_for_team: 1, bio: '热爱前端与算法，拿过蓝桥杯省一。' });
   await createProfile(s2, 'STUDENT', { real_name: '赵六', student_no: '2023002', college_code: 'SE', major_code: 'SE_SE', class_name: '软工2302', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['BE', 'DATA'], looking_for_team: 1 });
   await createProfile(s3, 'STUDENT', { real_name: '孙七', student_no: '2023003', college_code: 'AI', major_code: 'AI_AI', class_name: '人工2301', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['ML'], looking_for_team: 1 });
   await createProfile(s4, 'STUDENT', { real_name: '周八', student_no: '2023004', college_code: 'EE', major_code: 'EE_IOT', class_name: '物联2301', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['EMBED'], looking_for_team: 1 });
+  await createProfile(s5, 'STUDENT', { real_name: '陈九', student_no: '2023005', college_code: 'CS', major_code: 'CS_AI', class_name: '计科2303', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['ALGO', 'ML'], looking_for_team: 1 });
+  await createProfile(s6, 'STUDENT', { real_name: '吴十', student_no: '2023006', college_code: 'SE', major_code: 'SE_DM', class_name: '软工2301', enrollment_year: 2023, graduation_year: 2027, degree_level: 'BACHELOR', skills: ['DATA', 'PM'], looking_for_team: 1 });
 
   // ---- 认证记录 ----
   await createVerification(t1, 'TEACHER', 'VERIFIED');
@@ -133,26 +139,33 @@ async function main() {
   await pool.query('UPDATE team SET advisor_id=? WHERE id=?', [t1, team1]);
   await addMember(team2, s3, 'LEADER', 'SELF');
   await addMember(team2, s4, 'MEMBER', 'INVITE');
+  await addMember(team2, t2, 'ADVISOR', 'INVITE');
+  await pool.query('UPDATE team SET advisor_id=? WHERE id=?', [t2, team2]);
 
-  // ---- 邀请 ----
-  await pool.query(
-    `INSERT INTO invitation (type, competition_id, team_id, inviter_id, invitee_id, message, status, expires_at, created_at)
-     VALUES (?,?,?,?,?,?,?,?,NOW(3))`,
-    ['TEACHER_INVITE_STUDENT', comp1, null, t2, s4, '同学你好，我关注到你有嵌入式方向的特长，想邀请你一起组队参加挑战杯。', 'PENDING', toDateTime(new Date(now + 7 * 24 * 3600 * 1000))]
-  );
-  await pool.query(
-    `INSERT INTO invitation (type, competition_id, team_id, inviter_id, invitee_id, message, status, expires_at, created_at)
-     VALUES (?,?,?,?,?,?,?,?,NOW(3))`,
-    ['STUDENT_INVITE_TEACHER', comp1, team2, s3, t2, '李老师您好，我们代码特工队想邀请您担任指导老师。', 'PENDING', toDateTime(new Date(now + 7 * 24 * 3600 * 1000))]
-  );
+  // ---- 邀请（三条均为可演示的待处理闭环） ----
+  const exp = toDateTime(new Date(now + 7 * 24 * 3600 * 1000));
+  async function addInvitation(type, compId, teamId, inviter, invitee, message) {
+    await pool.query(
+      `INSERT INTO invitation (type, competition_id, team_id, inviter_id, invitee_id, message, status, expires_at, created_at)
+       VALUES (?,?,?,?,?,?,?,?,NOW(3))`,
+      [type, compId, teamId, inviter, invitee, message, 'PENDING', exp]
+    );
+  }
+  // 1) 学生邀请老师：student1(队长) -> teacher2 加入 team1
+  await addInvitation('STUDENT_INVITE_TEACHER', comp1, team1, s1, t2, '李老师您好，我们星辰探索队想邀请您担任指导老师。');
+  // 2) 老师邀请学生：teacher2 -> student5 加入 team2
+  await addInvitation('TEACHER_INVITE_STUDENT', comp1, team2, t2, s5, '陈九同学你好，我关注到你的算法特长，想邀请你加入我们「代码特工队」。');
+  // 3) 学生申请入队：student6 -> team1（队长 student1 审批）
+  await addInvitation('STUDENT_APPLY_JOIN', comp1, team1, s6, s1, '大家好，我擅长数据分析与策划，希望加入贵队一起参赛。');
 
   // ---- 通知 ----
   async function addNotice(recipient, type, title, content, link) {
     await pool.query('INSERT INTO notification (recipient_id, type, title, content, link_url) VALUES (?,?,?,?,?)', [recipient, type, title, content, link]);
   }
   await addNotice(s1, 'SYSTEM', '欢迎使用高校赛事管理系统', '欢迎加入！完善个人档案并完成身份认证后，即可参与组队与竞赛。', '/profile');
-  await addNotice(s3, 'INVITATION', '收到入队邀请', '李四老师邀请你一起组队参加挑战杯。', '/invitations');
-  await addNotice(t2, 'INVITATION', '收到指导邀请', '孙七邀请你担任「代码特工队」指导老师。', '/invitations');
+  await addNotice(t2, 'INVITATION', '收到指导邀请', '王五邀请你担任「星辰探索队」指导老师。', '/invitations');
+  await addNotice(s5, 'INVITATION', '收到入队邀请', '李四老师邀请你加入「代码特工队」。', '/invitations');
+  await addNotice(s1, 'INVITATION', '收到入队申请', '吴十申请加入「星辰探索队」。', `/teams/${team1}`);
   await addNotice(managerId, 'SYSTEM', '有待审核的认证申请', '孙七 提交了学生身份认证，请及时审核。', '/admin/verifications');
 
   console.log('✅ 演示数据初始化完成');
@@ -165,6 +178,8 @@ async function main() {
   console.log('  student2 / 123456    （学生·赵六）');
   console.log('  student3 / 123456    （学生·孙七）');
   console.log('  student4 / 123456    （学生·周八）');
+  console.log('  student5 / 123456    （学生·陈九）');
+  console.log('  student6 / 123456    （学生·吴十）');
   process.exit(0);
 }
 

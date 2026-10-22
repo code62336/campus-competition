@@ -23,24 +23,26 @@ async function getMyProfile(accountId) {
 
 const STUDENT_FIELDS = ['real_name', 'gender', 'college_code', 'major_code', 'class_name', 'enrollment_year', 'graduation_year', 'degree_level', 'bio', 'skills', 'looking_for_team', 'allow_teacher_invite', 'avatar_url', 'email_public'];
 const TEACHER_FIELDS = ['real_name', 'gender', 'college_code', 'title', 'research_fields', 'bio', 'accept_students', 'max_teams', 'avatar_url', 'email_public', 'homepage_url'];
+const MANAGER_FIELDS = ['real_name', 'gender', 'college_code', 'bio', 'avatar_url', 'email_public'];
+const BOOL_FIELDS = new Set(['looking_for_team', 'allow_teacher_invite', 'accept_students']);
 
 async function updateMyProfile(accountId, fields) {
   const [accRows] = await pool.query('SELECT user_type FROM account WHERE id=?', [accountId]);
   if (!accRows[0]) throw new AppError(404, 'NOT_FOUND', '账号不存在');
   const userType = accRows[0].user_type;
-  const allowed = userType === 'STUDENT' ? STUDENT_FIELDS : TEACHER_FIELDS;
+  const allowed = userType === 'STUDENT' ? STUDENT_FIELDS : userType === 'TEACHER' ? TEACHER_FIELDS : MANAGER_FIELDS;
 
   const sets = [];
   const values = [];
   for (const key of allowed) {
     if (fields[key] === undefined) continue;
-    if (key === 'skills' || key === 'max_teams' || key === 'looking_for_team' || key === 'allow_teacher_invite' || key === 'accept_students') {
-      sets.push(`${key}=?`);
-      values.push(toJson(fields[key]));
-    } else {
-      sets.push(`${key}=?`);
-      values.push(fields[key]);
-    }
+    let v;
+    if (key === 'skills') v = toJson(fields[key]);
+    else if (BOOL_FIELDS.has(key)) v = fields[key] ? 1 : 0;
+    else if (key === 'max_teams') v = Number(fields[key]) || 3;
+    else v = fields[key];
+    sets.push(`${key}=?`);
+    values.push(v);
   }
   if (!sets.length) throw new AppError(400, 'VALIDATION', '没有可更新的字段');
   sets.push('profile_completed=1');

@@ -6,7 +6,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { ok, paged, parsePager } = require('../utils/response');
 
 // 仪表盘统计
-router.get('/stats', authRequired, requireManager, asyncHandler(async (req, res) => ok(res, await adminService.stats())));
+router.get('/stats', authRequired, requireManager, asyncHandler(async (req, res) => ok(res, await adminService.stats(req.user))));
 
 // 用户管理
 router.get('/users', authRequired, requireAdmin, asyncHandler(async (req, res) => {

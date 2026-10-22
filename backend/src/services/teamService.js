@@ -22,6 +22,15 @@ async function hasActiveTeam(conn, accountId, competitionId) {
   return !!rows[0];
 }
 
+// 校验赛道存在于赛事且启用（统一给 create/update 复用，id 统一转 Number 比较）
+function assertTrack(comp, trackId) {
+  if (trackId == null) return null;
+  const tracks = fromJson(comp.tracks_json) || [];
+  const track = tracks.find((x) => Number(x.id) === Number(trackId));
+  if (!track || track.enabled === false) throw new AppError(400, 'VALIDATION', '赛道不存在或已停用');
+  return trackId;
+}
+
 // ---------- 学生加入（事务内，已对 team 加锁） ----------
 async function joinStudent(teamId, accountId, source, invitedBy) {
   return withTransaction(async (conn) => {
@@ -29,6 +38,8 @@ async function joinStudent(teamId, accountId, source, invitedBy) {
     const t = trows[0];
     if (!t) throw new AppError(404, 'NOT_FOUND', '队伍不存在');
     if (t.status !== 'RECRUITING') throw new AppError(409, 'TEAM_LOCKED', '队伍未处于招募状态');
+    const comp = await competitionService.findById(t.competition_id);
+    if (comp && !competitionService.windowOpen(comp)) throw new AppError(409, 'REGISTER_CLOSED', '组队时间已截止');
     if (t.member_count >= t.max_members) throw new AppError(409, 'TEAM_FULL', '队伍人数已满');
 
     const [ex] = await conn.query('SELECT id FROM team_member WHERE team_id=? AND account_id=?', [teamId, accountId]);
@@ -119,14 +130,10 @@ async function create(user, data) {
     throw new AppError(409, 'REGISTER_CLOSED', '组队时间已截止');
   }
 
-  let trackId = data.trackId || null;
-  if (trackId) {
-    const tracks = fromJson(comp.tracks_json) || [];
-    if (!tracks.find((x) => x.id === trackId)) throw new AppError(400, 'VALIDATION', '赛道不存在');
-  }
+  let trackId = assertTrack(comp, data.trackId || null);
 
-  const [dup] = await pool.query("SELECT id FROM team WHERE competition_id=? AND name=? AND status<>'DISBANDED'", [competitionId, name]);
-  if (dup[0]) throw new AppError(409, 'TEAM_NAME_EXISTS', '该赛事下队名已存在');
+  const [dup] = await pool.query('SELECT id FROM team WHERE competition_id=? AND name=?', [competitionId, name]);
+  if (dup[0]) throw new AppError(409, 'TEAM_NAME_EXISTS', '该队名在本赛事中已被使用（含已解散队伍），请换一个');
 
   const [prows] = await pool.query('SELECT college_code, real_name FROM user_profile WHERE account_id=?', [leaderId]);
   const collegeCode = prows[0] ? prows[0].college_code : null;
@@ -180,14 +187,32 @@ async function detail(id, user) {
   const isAdvisor = !!(user && members.some((m) => m.account_id === user.id && m.role === 'ADVISOR' && m.status === 'ACTIVE'));
   const isManager = !!(user && ['MANAGER', 'ADMIN'].includes(user.userType));
 
+  // 学号/工号仅对队内成员、指导老师与负责人可见（数据脱敏）
+  const canViewSensitive = isLeader || isMember || isAdvisor || isManager;
+  if (!canViewSensitive) {
+    for (const m of members) { m.student_no = null; m.teacher_no = null; }
+  }
+
+  // 学院名与赛道名
+  let collegeName = null;
+  if (t.college_code) {
+    const [cr] = await pool.query("SELECT label FROM dict_item WHERE type='COLLEGE' AND code=?", [t.college_code]);
+    if (cr[0]) collegeName = cr[0].label;
+  }
+  const tracks = fromJson(comp ? comp.tracks_json : null) || [];
+  const track = tracks.find((x) => Number(x.id) === Number(t.track_id));
+  const trackName = track ? track.name : (t.track_id ? `赛道 #${t.track_id}` : null);
+
   return {
     id: t.id,
     competition_id: t.competition_id,
     competition_title: comp ? comp.title : null,
     track_id: t.track_id,
+    track_name: trackName,
     name: t.name,
     slogan: t.slogan,
     college_code: t.college_code,
+    college_name: collegeName,
     leader_id: t.leader_id,
     advisor_id: t.advisor_id,
     status: t.status,
@@ -212,14 +237,17 @@ async function update(id, user, data) {
   const sets = [];
   const values = [];
   if (data.name !== undefined) {
-    const [dup] = await pool.query("SELECT id FROM team WHERE competition_id=? AND name=? AND id<>? AND status<>'DISBANDED'", [t.competition_id, data.name, id]);
-    if (dup[0]) throw new AppError(409, 'TEAM_NAME_EXISTS', '该赛事下队名已存在');
+    const [dup] = await pool.query('SELECT id FROM team WHERE competition_id=? AND name=? AND id<>?', [t.competition_id, data.name, id]);
+    if (dup[0]) throw new AppError(409, 'TEAM_NAME_EXISTS', '该队名在本赛事中已被使用，请换一个');
     sets.push('name=?'); values.push(data.name);
   }
   if (data.slogan !== undefined) { sets.push('slogan=?'); values.push(data.slogan); }
   if (data.recruiting !== undefined) { sets.push('recruiting=?'); values.push(data.recruiting ? 1 : 0); }
   if (data.trackId !== undefined) {
     if (t.status === 'LOCKED') throw new AppError(423, 'TEAM_LOCKED', '队伍已锁定，不可更改赛道');
+    const comp = await competitionService.findById(t.competition_id);
+    if (!comp) throw new AppError(404, 'NOT_FOUND', '赛事不存在');
+    assertTrack(comp, data.trackId);
     sets.push('track_id=?'); values.push(data.trackId);
   }
   if (!sets.length) throw new AppError(400, 'VALIDATION', '没有可更新的字段');
@@ -278,6 +306,7 @@ async function leave(id, user) {
   const t = await getTeam(id);
   if (!t) throw new AppError(404, 'NOT_FOUND', '队伍不存在');
   if (t.leader_id === user.id) throw new AppError(400, 'LEADER_CANNOT_LEAVE', '队长不能直接退出，请先转让队长');
+  if (t.status === 'LOCKED') throw new AppError(423, 'TEAM_LOCKED', '队伍已锁定，成员不可变更');
   const [m] = await pool.query('SELECT role, status FROM team_member WHERE team_id=? AND account_id=?', [id, user.id]);
   if (!m[0]) throw new AppError(404, 'NOT_FOUND', '你不是该队成员');
   await withTransaction(async (conn) => {
@@ -299,7 +328,8 @@ async function removeMember(id, user, targetId) {
   const isLeader = t.leader_id === user.id;
   const isManager = ['MANAGER', 'ADMIN'].includes(user.userType);
   if (!isLeader && !isManager) throw new AppError(403, 'PERMISSION_DENIED', '无权限移除成员');
-  if (targetId === t.leader_id) throw new AppError(400, 'VALIDATION', '不能移除队长');
+  if (t.status === 'LOCKED') throw new AppError(423, 'TEAM_LOCKED', '队伍已锁定，成员不可变更');
+  if (String(targetId) === String(t.leader_id)) throw new AppError(400, 'VALIDATION', '不能移除队长');
   const [m] = await pool.query('SELECT role, status FROM team_member WHERE team_id=? AND account_id=?', [id, targetId]);
   if (!m[0]) throw new AppError(404, 'NOT_FOUND', '该成员不在队伍中');
   await withTransaction(async (conn) => {

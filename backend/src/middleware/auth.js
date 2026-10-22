@@ -1,18 +1,57 @@
+const { pool } = require('../config/db');
 const { verifyAccess } = require('../utils/jwt');
 const AppError = require('../utils/AppError');
 const { ROLE } = require('../config');
 
-function authRequired(req, res, next) {
+// 账号状态内存缓存（60s TTL），避免每请求查库；禁用/改状态时主动失效
+const statusCache = new Map();
+const CACHE_TTL = 60 * 1000;
+
+async function getAccountStatus(accountId) {
+  const cached = statusCache.get(accountId);
+  if (cached && Date.now() < cached.exp) return cached;
+  const [rows] = await pool.query('SELECT status, user_type, display_name FROM account WHERE id=?', [accountId]);
+  if (!rows[0]) return null;
+  const entry = { status: rows[0].status, userType: rows[0].user_type, displayName: rows[0].display_name, exp: Date.now() + CACHE_TTL };
+  statusCache.set(accountId, entry);
+  return entry;
+}
+
+function clearStatusCache(accountId) { statusCache.delete(accountId); }
+
+function parseToken(req) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
+}
+
+async function authRequired(req, res, next) {
+  const token = parseToken(req);
   if (!token) return next(new AppError(401, 'UNAUTHENTICATED', '未登录或登录已过期'));
+  let payload;
   try {
-    const payload = verifyAccess(token);
-    req.user = { id: Number(payload.sub), userType: payload.userType, displayName: payload.displayName };
-    next();
+    payload = verifyAccess(token);
   } catch (e) {
     return next(new AppError(401, 'TOKEN_EXPIRED', '登录已过期，请重新登录'));
   }
+  const acc = await getAccountStatus(Number(payload.sub));
+  if (!acc || acc.status !== 'ACTIVE') return next(new AppError(401, 'ACCOUNT_INVALID', '账号不可用，请重新登录'));
+  // 以数据库为准的 user_type/status，禁用与改角色即时生效
+  req.user = { id: Number(payload.sub), userType: acc.userType, displayName: acc.displayName };
+  next();
+}
+
+// 可选鉴权：带了合法 token 就注入 user，否则放行（公开接口使用）
+async function optionalAuth(req, res, next) {
+  const token = parseToken(req);
+  if (!token) return next();
+  try {
+    const payload = verifyAccess(token);
+    const acc = await getAccountStatus(Number(payload.sub));
+    if (acc && acc.status === 'ACTIVE') {
+      req.user = { id: Number(payload.sub), userType: acc.userType, displayName: acc.displayName };
+    }
+  } catch (e) { /* 忽略，按未登录处理 */ }
+  next();
 }
 
 function requireRole(...roles) {
@@ -28,4 +67,4 @@ function requireRole(...roles) {
 const requireManager = requireRole(ROLE.MANAGER, ROLE.ADMIN);
 const requireAdmin = requireRole(ROLE.ADMIN);
 
-module.exports = { authRequired, requireRole, requireManager, requireAdmin, ROLE };
+module.exports = { authRequired, optionalAuth, requireRole, requireManager, requireAdmin, ROLE, clearStatusCache };

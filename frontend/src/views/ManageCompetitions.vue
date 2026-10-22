@@ -157,12 +157,26 @@ async function load(page) {
 }
 function onPage(p) { load(p); }
 
+function toPayload(f) {
+  return {
+    title: f.title, subtitle: f.subtitle, code: f.code, level: f.level, year: f.year,
+    collegeCode: f.college_code || null, category: f.category || null, organizer: f.organizer || null,
+    officialUrl: f.official_url || null, descriptionMd: f.description_md || null, coverUrl: f.cover_url || null,
+    registerStartAt: f.register_start_at, registerEndAt: f.register_end_at,
+    minTeamSize: f.min_team_size, maxTeamSize: f.max_team_size,
+    teacherRequired: f.teacher_required, maxTeacherCount: f.max_teacher_count,
+    maxTeamsPerTeacher: f.max_teams_per_teacher, allowCrossCollege: f.allow_cross_college,
+    tracks: f.tracks,
+  };
+}
+
 async function save() {
   if (!form.value.title || !form.value.level || !form.value.year || !form.value.register_start_at || !form.value.register_end_at) return ElMessage.warning('请完善必填项');
   saving.value = true;
   try {
-    if (editing.value) await api.updateCompetition(editing.value.id, form.value);
-    else await api.createCompetition(form.value);
+    const payload = toPayload(form.value);
+    if (editing.value) await api.updateCompetition(editing.value.id, payload);
+    else await api.createCompetition(payload);
     ElMessage.success('已保存'); dialogVisible.value = false; load();
   } finally { saving.value = false; }
 }

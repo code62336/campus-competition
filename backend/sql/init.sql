@@ -291,6 +291,7 @@ CREATE TABLE IF NOT EXISTS `verification_code` (
   `code_hash`  CHAR(64) NOT NULL,
   `expires_at` DATETIME(3) NOT NULL,
   `used_at`    DATETIME(3) DEFAULT NULL,
+  `attempts`   TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '连续失败次数(>5 作废)',
   `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_contact_purpose` (`contact`, `purpose`, `created_at`)

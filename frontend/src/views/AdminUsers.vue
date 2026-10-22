@@ -96,7 +96,10 @@ async function resetPwd(row) {
 function openCreate() { form.value = { userType: 'STUDENT', username: '', password: '', realName: '', no: '', collegeCode: '' }; dialogVisible.value = true; }
 async function create() {
   if (!form.value.username || !form.value.password || !form.value.realName) return ElMessage.warning('请填写用户名、密码、姓名');
-  await api.createUser({ ...form.value, studentNo: form.value.no, teacherNo: form.value.no });
+  const payload = { username: form.value.username, password: form.value.password, userType: form.value.userType, realName: form.value.realName, collegeCode: form.value.collegeCode };
+  if (form.value.userType === 'STUDENT') payload.studentNo = form.value.no;
+  else if (form.value.userType === 'TEACHER') payload.teacherNo = form.value.no;
+  await api.createUser(payload);
   ElMessage.success('已创建'); dialogVisible.value = false; load();
 }
 

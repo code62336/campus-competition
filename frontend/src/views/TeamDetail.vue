@@ -140,7 +140,7 @@ const applyMessage = ref('');
 
 const actions = computed(() => team.value?.actions || {});
 const advisorCount = computed(() => team.value?.members.filter((m) => m.role === 'ADVISOR' && m.status === 'ACTIVE').length || 0);
-const trackName = computed(() => team.value?.track_id ? `赛道 #${team.value.track_id}` : '未选赛道');
+const trackName = computed(() => team.value?.track_name || (team.value?.track_id ? `赛道 #${team.value.track_id}` : '未选赛道'));
 const statusLabel = computed(() => ({ RECRUITING: '招募中', LOCKED: '已锁定', DISBANDED: '已解散' }[team.value?.status] || team.value?.status));
 const statusType = computed(() => ({ RECRUITING: 'success', LOCKED: 'warning', DISBANDED: 'info' }[team.value?.status] || 'info'));
 
